@@ -4,11 +4,15 @@ OpenCode plugin for LING Studio. Maintained at https://github.com/aqcool/omo-lin
 
 ## Install
 
-Requires **OpenCode 2.0.32**. Until npm publication, build a fixed commit with the recipe below, copy the resulting `ling/dist/` directory to a permanent writable directory, and add that absolute directory through the selected OpenCode:
+Requires **OpenCode 2.0.32**. Until npm publication, build a fixed commit with the recipe below, copy the resulting `ling/dist/` directory to a permanent writable directory, and reference that absolute directory in the selected OpenCode configuration:
 
-```sh
-/path/to/bundled/opencode plugin add /absolute/path/to/omo-ling/commit
+```json
+{
+  "plugins": ["/absolute/path/to/omo-ling/commit"]
+}
 ```
+
+This is the relevant field only; preserve all other configuration fields. OpenCode 2.0.32's `plugin add` command accepts registry/Git package specifiers, not local directories. Local directory references are supported by the plugin loader.
 
 Keep a source commit and file digests alongside the copy. Install directories must not be temporary worktrees or signed application resources. Back up the selected configuration before removing the previous `oh-my-openagent` entry. Reconnect and verify `omo-ling` is active.
 
