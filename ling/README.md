@@ -4,7 +4,15 @@ OpenCode plugin for LING Studio. Maintained at https://github.com/aqcool/omo-lin
 
 ## Install
 
-Requires **OpenCode 2.0.32**. After the package version is published:
+Requires **OpenCode 2.0.32**. Until npm publication, build a fixed commit with the recipe below, copy `index.js`, `package.json`, `README.md`, `LICENSE.md` and `THIRD-PARTY-NOTICES.md` to a permanent writable directory, and add that absolute directory through the selected OpenCode:
+
+```sh
+/path/to/bundled/opencode plugin add /absolute/path/to/omo-ling/commit
+```
+
+Keep a source commit and file digests alongside the copy. Install directories must not be temporary worktrees or signed application resources. Back up the selected configuration before removing the previous `oh-my-openagent` entry. Reconnect and verify `omo-ling` is active.
+
+After the npm version is published, replace the local directory entry with:
 
 ```sh
 opencode plugin add omo-ling@0.1.0
