@@ -26,7 +26,7 @@ jobs:
           npm pack --ignore-scripts
       - name: Isolated native host QA
         run: |
-          npm install --prefix "$RUNNER_TEMP/opencode" --ignore-scripts @opencode/cli@2.0.32
+          npm install --prefix "$RUNNER_TEMP/opencode" --ignore-scripts @opencode/cli-linux-x64@2.0.32
           mkdir -p "$RUNNER_TEMP/omo-package"
           tar -xzf ling/omo-ling-0.1.0.tgz -C "$RUNNER_TEMP/omo-package"
-          python3 ling/qa.py --cli "$RUNNER_TEMP/opencode/node_modules/.bin/opencode" --package "$RUNNER_TEMP/omo-package/package"
+          python3 ling/qa.py --cli "$RUNNER_TEMP/opencode/node_modules/@opencode/cli-linux-x64/bin/opencode" --package "$RUNNER_TEMP/omo-package/package"
