@@ -39,16 +39,13 @@ with tempfile.TemporaryDirectory(prefix='omo-ling-qa-') as temporary:
             def rpc(group,method,value={}):
                 out=api('/api/rpc/'+group+'/'+method,{'input':value})
                 return out.get('data',out).get('output',out.get('data',out))
-            plugins=api('/api/plugin')
-            for _ in range(20):
-                if plugins['data']: break
-                time.sleep(0.3)
+            deadline=time.monotonic()+20
+            while True:
                 plugins=api('/api/plugin')
-            active=[p for p in plugins['data'] if p['id']=='omo-ling' and p['state']['status']=='active']
-            
-            if len(active)!=1:
-                for f in root.rglob('*.log'):
-                    print(f.name, f.read_text(errors='replace')[-6000:])
+                active=[p for p in plugins['data'] if p.get('id')=='omo-ling' and p.get('state',{}).get('status')=='active']
+                failed=[p for p in plugins['data'] if p.get('state',{}).get('status')=='failed']
+                if active or failed or time.monotonic()>=deadline: break
+                time.sleep(0.1)
             assert len(active)==1, plugins
             agents=rpc('omo.agents','list')
             expected={'sisyphus','hephaestus','oracle','librarian','explore','multimodal-looker','metis','momus','atlas','sisyphus-junior'}
