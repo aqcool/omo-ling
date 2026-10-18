@@ -2,7 +2,7 @@ name: omo-ling
 on:
   pull_request:
     branches: [port/v2]
-    paths: ['ling/**', 'packages/omo-opencode/src/v2/**', '.github/workflows/omo-ling.yml']
+    paths: ['ling/**', 'packages/omo-opencode/src/v2/**', 'packages/memory-core/**', '.github/workflows/omo-ling.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -28,5 +28,6 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/opencode" --ignore-scripts @opencode/cli-linux-x64@2.0.32
           mkdir -p "$RUNNER_TEMP/omo-package"
-          tar -xzf ling/omo-ling-0.1.0.tgz -C "$RUNNER_TEMP/omo-package"
+          tar -xzf ling/omo-ling-0.2.0.tgz -C "$RUNNER_TEMP/omo-package"
           python3 ling/qa.py --cli "$RUNNER_TEMP/opencode/node_modules/@opencode/cli-linux-x64/bin/opencode" --package "$RUNNER_TEMP/omo-package/package"
+          python3 ling/qa-goal-memory.py --cli "$RUNNER_TEMP/opencode/node_modules/@opencode/cli-linux-x64/bin/opencode" --package "$RUNNER_TEMP/omo-package/package"

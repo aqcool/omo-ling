@@ -19,12 +19,16 @@
       ],
       "zod": [
         "./node_modules/zod/index.d.ts"
+      ],
+      "yaml": [
+        "./node_modules/yaml/dist/index.d.ts"
       ]
     }
   },
   "include": [
-    "index.ts",
-    "build.ts",
-    "test.ts"
+    "*.ts"
+  ],
+  "exclude": [
+    "tests-entry.ts"
   ]
 }
