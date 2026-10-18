@@ -84,3 +84,4 @@ ling/LICENSE.md
 ling/THIRD-PARTY-NOTICES.md
 ling/*.tgz
 ling/.test/
+!ling/package-lock.json
