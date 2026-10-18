@@ -7,6 +7,8 @@ import {
   forgetBackgroundTask,
   getRegisteredBackgroundTask,
   listDescendantTasks,
+  launchBackgroundTask,
+  readTodos,
   newTaskId,
   rememberBackgroundTask,
   type BackgroundTask,
@@ -48,8 +50,8 @@ function assistantMessage(text: string): SessionMessageInfo {
 
 function stubClient(messages: SessionMessageInfo[]): OpenCodeClient {
   return {
-    message: {
-      list: async () => ({ data: messages, cursor: { previous: null, next: null } }),
+    session: {
+      context: async () => messages,
     },
   } as unknown as OpenCodeClient
 }
@@ -158,5 +160,30 @@ describe("orchestration — cancel", () => {
     rememberBackgroundTask(task)
     const output = await cancelBackgroundTask(stubClientWithInterrupt(), "bg_test0003")
     expect(output).toContain("Cannot cancel task")
+  })
+})
+
+
+describe("LING hosting context", () => {
+  it("creates native child sessions on the supplied host", async () => {
+    let createInput: Record<string, unknown> | undefined
+    let prompted = ""
+    const client = {
+      session: {
+        create: async (input: Record<string, unknown>) => { createInput = input; return { id: "ses_child" } },
+        prompt: async (input: { sessionID: string }) => { prompted = input.sessionID },
+      },
+    } as unknown as OpenCodeClient
+    const task = await launchBackgroundTask(client, {
+      description: "host-bound", prompt: "local fake", agent: "build", parentSessionId: "ses_parent",
+    }, "/workspace")
+    expect(createInput?.parentID).toBe("ses_parent")
+    expect(prompted).toBe("ses_child")
+    expect(task.status).toBe("running")
+    forgetBackgroundTask(task.id)
+  })
+  it("propagates metadata read errors instead of returning an empty success", async () => {
+    const client = { session: { get: async () => { throw new Error("missing session") } } } as unknown as OpenCodeClient
+    await expect(readTodos(client, "ses_missing")).rejects.toThrow("missing session")
   })
 })
