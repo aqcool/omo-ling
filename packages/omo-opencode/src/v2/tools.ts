@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative, resolve, sep } from "node:path"
-import { Plugin } from "@opencode/plugin"
+import type { Plugin } from "@opencode/plugin"
 import { z } from "zod"
 
 /**

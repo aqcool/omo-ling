@@ -14,6 +14,9 @@ permissions:
 
 jobs:
   cla:
+    # This workflow checks the upstream CLA and its private signature branch.
+    # Fork maintainers retain the license but do not operate that CLA service.
+    if: github.repository == 'code-yeongyu/oh-my-openagent'
     runs-on: ubuntu-latest
     steps:
       - name: Check stored CLA signatures

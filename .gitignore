@@ -77,3 +77,12 @@ plans/
 
 # Rust workspace (crates/senpi-desktop-*)
 /target
+
+# Standalone npm build artifacts
+ling/index.js
+ling/LICENSE.md
+ling/THIRD-PARTY-NOTICES.md
+ling/*.tgz
+ling/.test/
+!ling/package-lock.json
+ling/dist/

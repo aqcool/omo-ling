@@ -31,17 +31,16 @@
  *     `./client-events.ts`), consumed here via `subscribeEvents`.
  */
 
-import { Plugin } from "@opencode/plugin"
+import type { Plugin } from "@opencode/plugin"
 import { z } from "zod"
 import type {
-  OpenCodeClient,
   OpenCodeEvent,
   SessionMessageAssistant,
   SessionMessageInfo,
 } from "@opencode/client"
-import { createClientFromEndpoint, discoverService, subscribeEvents } from "./client"
 
 type PluginContext = Parameters<Parameters<typeof Plugin.define>[0]["setup"]>[0]
+type HostClient = Pick<PluginContext, "session" | "event">
 
 // ---------------------------------------------------------------------------
 // Types (parity subset of V1 `features/background-agent/types.ts` +
@@ -217,7 +216,7 @@ function extractSessionIdFromEvent(event: OpenCodeEvent): string | undefined {
  * V1 fail-closed — no silent swallow, no hang).
  */
 async function launchBackgroundTask(
-  client: OpenCodeClient,
+  client: HostClient,
   input: LaunchInput,
   directory: string,
 ): Promise<BackgroundTask> {
@@ -235,6 +234,7 @@ async function launchBackgroundTask(
   try {
     const session = await client.session.create({
       agent: input.agent,
+      ...(input.parentSessionId ? { parentID: input.parentSessionId } : {}),
       title: input.description,
       location: { directory },
       metadata: { parentSessionId: input.parentSessionId },
@@ -277,6 +277,7 @@ function extractAssistantText(messages: SessionMessageInfo[]): string {
 }
 
 function formatTaskLaunchResult(task: BackgroundTask): string {
+  if (task.status === "error") return formatTaskStatus(task)
   return `Background task launched successfully.
 
 Task ID: ${task.id}
@@ -302,7 +303,7 @@ Use the \`background_task_id\` / \`Background Task ID\` from the task launch out
  * status/error for terminal non-completed states).
  */
 async function collectBackgroundOutput(
-  client: OpenCodeClient,
+  client: HostClient,
   taskId: string,
 ): Promise<string> {
   const task = getRegisteredBackgroundTask(taskId)
@@ -311,8 +312,8 @@ async function collectBackgroundOutput(
   if (task.status === "completed") {
     if (!task.sessionId) return formatTaskStatus(task)
     try {
-      const response = await client.message.list({ sessionID: task.sessionId, order: "asc" })
-      const text = extractAssistantText(response.data)
+      const messages = await client.session.context({ sessionID: task.sessionId })
+      const text = extractAssistantText(messages)
       return text.length > 0 ? text : formatTaskStatus(task)
     } catch (error) {
       return `Error getting output: ${error instanceof Error ? error.message : String(error)}`
@@ -379,7 +380,7 @@ interface CancelResult {
  * running, then records the task as `cancelled` (parity: V1 `cancelTask`).
  */
 async function cancelBackgroundTask(
-  client: OpenCodeClient,
+  client: HostClient,
   taskId: string,
 ): Promise<string> {
   const task = getRegisteredBackgroundTask(taskId)
@@ -419,7 +420,7 @@ Session ID: ${task.sessionId}
 Status: ${originalStatus}`
 }
 
-async function cancelAllBackgroundTasks(client: OpenCodeClient, parentSessionId: string): Promise<string> {
+async function cancelAllBackgroundTasks(client: HostClient, parentSessionId: string): Promise<string> {
   const tasks = listDescendantTasks(parentSessionId)
   const cancellable = tasks.filter(
     (task) => task.status === "running" || task.status === "pending",
@@ -482,7 +483,7 @@ function isTodoInfo(value: unknown): value is TodoInfo {
   )
 }
 
-async function readTodos(client: OpenCodeClient, sessionId: string): Promise<TodoInfo[]> {
+async function readTodos(client: HostClient, sessionId: string): Promise<TodoInfo[]> {
   try {
     const info = await client.session.get({ sessionID: sessionId })
     const raw = info.metadata?.[TODO_METADATA_KEY]
@@ -494,11 +495,11 @@ async function readTodos(client: OpenCodeClient, sessionId: string): Promise<Tod
     return todos
   } catch (error) {
     recordActivity("todo-read-error", `${sessionId}:${String(error)}`)
-    return []
+    throw error
   }
 }
 
-async function writeTodos(client: OpenCodeClient, sessionId: string, todos: TodoInfo[]): Promise<void> {
+async function writeTodos(client: HostClient, sessionId: string, todos: TodoInfo[]): Promise<void> {
   const info = await client.session.get({ sessionID: sessionId })
   const metadata = { ...(info.metadata ?? {}) }
   metadata[TODO_METADATA_KEY] = todos as unknown as import("@opencode/client").JsonValue
@@ -515,7 +516,7 @@ interface EventLoopHandle {
   readonly stop: () => void
 }
 
-function startEventLoop(client: OpenCodeClient): EventLoopHandle {
+function startEventLoop(client: HostClient): EventLoopHandle {
   const controller = new AbortController()
   let stopped = false
 
@@ -561,7 +562,7 @@ function startEventLoop(client: OpenCodeClient): EventLoopHandle {
 
   void (async () => {
     try {
-      for await (const event of subscribeEvents(client, { signal: controller.signal })) {
+      for await (const event of client.event.subscribe({ signal: controller.signal })) {
         if (stopped) break
         handleEvent(event)
       }
@@ -639,18 +640,11 @@ const BACKGROUND_CANCEL_DESCRIPTION = `Cancel running background task(s). Use al
 export async function registerOrchestration(ctx: PluginContext): Promise<() => Promise<void>> {
   const directory = ctx.location.directory
 
-  // Resolve the hosting server's client via service discovery (task-11
-  // `discoverService`/`createClientFromEndpoint`). Falls back to undefined when
-  // no discoverable server; tools then fail closed with a clear message.
-  const endpoint = await discoverService()
-  const client = endpoint ? createClientFromEndpoint(endpoint) : undefined
-  const eventLoop = client ? startEventLoop(client) : undefined
-
-  if (client) {
-    recordActivity("client-resolved", client ? "connected" : "none")
-  } else {
-    recordActivity("client-resolved", "none")
-  }
+  // Plugin domains are bound to this host, including private `serve --stdio`
+  // instances. Service discovery may point to an unrelated global daemon.
+  const client: HostClient = ctx
+  const eventLoop = startEventLoop(client)
+  recordActivity("client-resolved", "hosting-context")
 
   // 1. Tool registration (V1 background-* tools → V2 `ctx.tool.transform`).
   await ctx.tool.transform((editor) => {
@@ -658,8 +652,7 @@ export async function registerOrchestration(ctx: PluginContext): Promise<() => P
       name: "background_task",
       description: BACKGROUND_TASK_DESCRIPTION,
       input: backgroundTaskInputSchema,
-      execute: async (input) => {
-        if (!client) return { content: "[ERROR] no discoverable opencode client" }
+      execute: async (input, context) => {
         if (!input.agent || input.agent.trim() === "") {
           return { content: "[ERROR] Agent parameter is required." }
         }
@@ -669,7 +662,7 @@ export async function registerOrchestration(ctx: PluginContext): Promise<() => P
             description: input.description,
             prompt: input.prompt,
             agent: input.agent.trim(),
-            parentSessionId: "", // tool context has no session id in the V2 execute contract
+            parentSessionId: context.sessionID,
           },
           directory,
         )
@@ -682,7 +675,6 @@ export async function registerOrchestration(ctx: PluginContext): Promise<() => P
       description: BACKGROUND_OUTPUT_DESCRIPTION,
       input: backgroundOutputInputSchema,
       execute: async (input) => {
-        if (!client) return { content: "[ERROR] no discoverable opencode client" }
         return { content: await collectBackgroundOutput(client, input.task_id) }
       },
     })
@@ -691,10 +683,9 @@ export async function registerOrchestration(ctx: PluginContext): Promise<() => P
       name: "background_cancel",
       description: BACKGROUND_CANCEL_DESCRIPTION,
       input: backgroundCancelInputSchema,
-      execute: async (input) => {
-        if (!client) return { content: "[ERROR] no discoverable opencode client" }
+      execute: async (input, context) => {
         if (input.all === true) {
-          return { content: await cancelAllBackgroundTasks(client, "") }
+          return { content: await cancelAllBackgroundTasks(client, context.sessionID) }
         }
         const taskId = input.taskId
         if (!taskId) {
@@ -770,7 +761,6 @@ export async function registerOrchestration(ctx: PluginContext): Promise<() => P
     },
     {
       spawn: async (input) => {
-        if (!client) return { ok: false, error: "no discoverable opencode client" }
         const task = await launchBackgroundTask(
           client,
           {
@@ -782,7 +772,7 @@ export async function registerOrchestration(ctx: PluginContext): Promise<() => P
           directory,
         )
         return {
-          ok: true,
+          ok: task.status !== "error",
           taskId: task.id,
           status: task.status,
           ...(task.sessionId ? { sessionId: task.sessionId } : {}),
@@ -790,7 +780,6 @@ export async function registerOrchestration(ctx: PluginContext): Promise<() => P
         }
       },
       collect: async (input) => {
-        if (!client) return { ok: false, error: "no discoverable opencode client" }
         try {
           const output = await collectBackgroundOutput(client, input.task_id)
           return { ok: true, output }
@@ -799,7 +788,6 @@ export async function registerOrchestration(ctx: PluginContext): Promise<() => P
         }
       },
       cancel: async (input) => {
-        if (!client) return { ok: false, error: "no discoverable opencode client" }
         try {
           const output =
             input.all === true
@@ -824,7 +812,6 @@ export async function registerOrchestration(ctx: PluginContext): Promise<() => P
         return { tasks }
       },
       todoWrite: async (input) => {
-        if (!client) return { ok: false, count: 0, error: "no discoverable opencode client" }
         try {
           await writeTodos(client, input.sessionID, input.todos)
           return { ok: true, count: input.todos.length }
@@ -833,7 +820,6 @@ export async function registerOrchestration(ctx: PluginContext): Promise<() => P
         }
       },
       todoRead: async (input) => {
-        if (!client) return { ok: false, todos: [], error: "no discoverable opencode client" }
         try {
           const todos = await readTodos(client, input.sessionID)
           return {

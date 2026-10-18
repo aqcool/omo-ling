@@ -1,0 +1,32 @@
+name: omo-ling
+on:
+  pull_request:
+    branches: [port/v2]
+    paths: ['ling/**', 'packages/omo-opencode/src/v2/**', '.github/workflows/omo-ling.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.2.19'
+      - run: npm ci --prefix ling --ignore-scripts
+      - working-directory: ling
+        run: |
+          bun run typecheck
+          bun run test
+          bun run build
+          npm pack ./dist --ignore-scripts
+      - name: Isolated native host QA
+        run: |
+          npm install --prefix "$RUNNER_TEMP/opencode" --ignore-scripts @opencode/cli-linux-x64@2.0.32
+          mkdir -p "$RUNNER_TEMP/omo-package"
+          tar -xzf ling/omo-ling-0.1.0.tgz -C "$RUNNER_TEMP/omo-package"
+          python3 ling/qa.py --cli "$RUNNER_TEMP/opencode/node_modules/@opencode/cli-linux-x64/bin/opencode" --package "$RUNNER_TEMP/omo-package/package"

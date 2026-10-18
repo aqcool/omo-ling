@@ -1,3 +1,13 @@
+# omo-ling
+
+LING Studio's OpenCode plugin, based on [fazulfi/omo-v2](https://github.com/fazulfi/omo-v2) `port/v2` at `8907576a64e6c1357581033f0195e742946059bc`.
+
+See [the npm package and build guide](ling/README.md). The published server entry is named `omo-ling` and targets OpenCode **2.0.32**. Background work uses the hosting plugin context and native parent session IDs. MCP configuration and skill discovery remain with the host.
+
+This is a partial community port: goal mode, long-term memory and the original full prompt/hook set are **not implemented** by this entry. Upstream licensing and attribution are preserved below.
+
+---
+
 # omo-v2 — Oh My OpenCode, ported to OpenCode V2
 
 > **Fork of [code-yeongyu/oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent)** (base commit `d1317056`, tag `v5.1.4`).
