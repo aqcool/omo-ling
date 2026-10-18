@@ -3,7 +3,7 @@ import argparse, base64, json, os, pathlib, secrets, selectors, sqlite3, subproc
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--cli', required=True)
-parser.add_argument('--package', default=str(pathlib.Path(__file__).resolve().parent))
+parser.add_argument('--package', default=str(pathlib.Path(__file__).resolve().parent/"dist"))
 args = parser.parse_args()
 real_db = pathlib.Path.home()/'.local/share/opencode/opencode.db'
 def count_real():

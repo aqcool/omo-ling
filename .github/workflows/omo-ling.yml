@@ -23,7 +23,7 @@ jobs:
           bun run typecheck
           bun run test
           bun run build
-          npm pack --ignore-scripts
+          npm pack ./dist --ignore-scripts
       - name: Isolated native host QA
         run: |
           npm install --prefix "$RUNNER_TEMP/opencode" --ignore-scripts @opencode/cli-linux-x64@2.0.32

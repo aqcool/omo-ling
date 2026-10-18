@@ -4,7 +4,7 @@ OpenCode plugin for LING Studio. Maintained at https://github.com/aqcool/omo-lin
 
 ## Install
 
-Requires **OpenCode 2.0.32**. Until npm publication, build a fixed commit with the recipe below, copy `index.js`, `package.json`, `README.md`, `LICENSE.md` and `THIRD-PARTY-NOTICES.md` to a permanent writable directory, and add that absolute directory through the selected OpenCode:
+Requires **OpenCode 2.0.32**. Until npm publication, build a fixed commit with the recipe below, copy the resulting `ling/dist/` directory to a permanent writable directory, and add that absolute directory through the selected OpenCode:
 
 ```sh
 /path/to/bundled/opencode plugin add /absolute/path/to/omo-ling/commit
@@ -37,10 +37,10 @@ From the repository root, with Node/npm and Bun 1.2.19 or later:
 npm ci --prefix ling --ignore-scripts
 cd ling
 bun run build
-npm pack --ignore-scripts
+npm pack ./dist --ignore-scripts
 python3 qa.py --cli /absolute/path/to/opencode
 ```
 
-The build bundles runtime dependencies into `index.js`; end users need no install scripts, compiler, or runtime dependency download beyond the package. Build dependencies are pinned in `package-lock.json`. The no-inference QA starts a private OpenCode server with isolated HOME/XDG roots and tests actual loading, agents, todo roundtrip, missing-session errors, and filesystem tools.
+The build produces a standalone `dist/` directory without TypeScript sources or node_modules and bundles runtime dependencies into `index.js`; end users need no install scripts, compiler, or runtime dependency download beyond the package. Build dependencies are pinned in `package-lock.json`. The no-inference QA starts a private OpenCode server with isolated HOME/XDG roots and tests actual loading, agents, todo roundtrip, missing-session errors, and filesystem tools.
 
 Source: `fazulfi/omo-v2` commit `8907576a64e6c1357581033f0195e742946059bc`, itself based on `code-yeongyu/oh-my-openagent` 5.1.4. Sustainable Use License 1.0 and original third-party notices are included. The name change does not change those license terms.
