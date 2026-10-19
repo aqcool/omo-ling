@@ -62,6 +62,27 @@ Set `goal.enabled` or `memory.enabled` to `false` to disable the corresponding r
 
 Goal behavior is adapted from upstream `d1317056` (`hooks/goal`); persistence and lifecycle use the native API. Memory reuses this fork's `packages/memory-core` public domain APIs.
 
+### Goal editor RPC
+
+`POST /api/rpc/omo.goal/get` accepts `{"input":{"sessionID":"..."}}` and returns a native RPC output containing `{ "goal": Goal | null }`. Desktop editors save the existing goal with `POST /api/rpc/omo.goal/edit`:
+
+```json
+{
+  "input": {
+    "sessionID": "...",
+    "objective": "Revised objective",
+    "expectedObjective": "Original objective from get",
+    "expectedCreatedAt": 1700000000000
+  }
+}
+```
+
+Both methods validate the native session. The edit compares the original objective and creation time atomically with the write; a missing, replaced, or concurrently edited goal returns an error without overwriting it. Usage updates do not cause an edit conflict. The response contains the updated goal. The objective is trimmed and must contain 1 to 16000 characters. Editing preserves status, creation time and cumulative usage, does not resume or enqueue a model round, and supplies the revised objective to subsequent active-goal context and compaction hooks.
+
+Declared RPC failures are `goal.not_found` for a session with no goal and `goal.conflict` for a stale editor snapshot. On a conflict, keep the unsaved text and reload the current goal before explicitly retrying. Invalid input uses the host's `rpc.invalid_input` response. A nonexistent native session fails the host validation before goal storage is accessed.
+
+Returned goals may include `runningSince`, an epoch timestamp in milliseconds for the current active execution. It is a transient snapshot, never persisted. `timeUsedSeconds` remains the completed execution total; while `runningSince` is present, a client can add elapsed time since that timestamp for its live display. Paused, completed, idle and restarted goals omit it. Reading either snapshot never starts model work.
+
 ## Reproduce the package
 
 From the repository root, with Node/npm and Bun 1.2.19 or later:
