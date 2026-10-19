@@ -12,9 +12,19 @@ const goalSchema = z.object({
   lastEvent: z.number().default(0), reason: z.string().optional(),
 })
 export type Goal = z.infer<typeof goalSchema>
+const goalSnapshotSchema = goalSchema.extend({ runningSince: z.number().optional() })
+type GoalSnapshot = z.infer<typeof goalSnapshotSchema>
 type Host = Pick<Plugin.Context, "storage" | "session">
 export const createGoalSchema = z.object({ objective: goalSchema.shape.objective })
 export const updateGoalSchema = z.object({ status: z.enum(["paused", "complete"]) })
+export const editGoalSchema = z.object({
+  objective: goalSchema.shape.objective,
+  expectedObjective: z.string().min(1).max(16000),
+  expectedCreatedAt: z.number(),
+})
+class GoalEditError extends Error {
+  constructor(readonly code: "goal.not_found" | "goal.conflict", message: string) { super(message) }
+}
 
 export function goalPrompt(goal: Goal): string {
   const objective = goal.objective.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
@@ -47,7 +57,31 @@ export class GoalController {
     return goal
   }
   private save(id: string, goal: Goal) { return this.host.storage.set(this.key(id), goal) }
-  get(id: string) { return this.exclusive(id, () => this.read(id)) }
+  private snapshot(id: string, goal: Goal): GoalSnapshot {
+    const start = this.started.get(id)
+    return goal.status === "active" && this.activeRuns.has(id) && start !== undefined
+      ? { ...goal, runningSince: Math.max(start, goal.createdAt) }
+      : { ...goal }
+  }
+  get(id: string) { return this.exclusive(id, async () => {
+    const goal = await this.read(id)
+    return goal ? this.snapshot(id, goal) : null
+  }) }
+  edit(id: string, input: z.infer<typeof editGoalSchema>) {
+    return this.exclusive(id, async () => {
+      const { objective, expectedObjective, expectedCreatedAt } = editGoalSchema.parse(input)
+      const goal = await this.read(id)
+      if (!goal) throw new GoalEditError("goal.not_found", "No goal exists in this session")
+      if (goal.objective !== expectedObjective || goal.createdAt !== expectedCreatedAt) {
+        throw new GoalEditError("goal.conflict", "Goal changed. Reload the goal before saving your edit.")
+      }
+      if (goal.objective !== objective) {
+        goal.objective = objective; goal.updatedAt = this.now()
+        await this.save(id, goal)
+      }
+      return this.snapshot(id, goal)
+    })
+  }
   create(id: string, objective: string) {
     return this.exclusive(id, async () => {
       const existing = await this.read(id)
@@ -190,10 +224,19 @@ export async function registerGoal(ctx: Plugin.Context): Promise<() => Promise<v
       if (goal?.status === "active") input.system.push({ type: "text", text: goalPrompt(goal) })
     }))
     registrations.push(await ctx.rpc.register({ id: "omo.goal", methods: {
-      get: { input: z.object({ sessionID: z.string() }), output: z.object({ goal: goalSchema.nullable() }) },
+      get: { input: z.object({ sessionID: z.string() }), output: z.object({ goal: goalSnapshotSchema.nullable() }) },
+      edit: { input: editGoalSchema.extend({ sessionID: z.string() }), output: z.object({ goal: goalSnapshotSchema.nullable() }),
+        errors: { "goal.not_found": z.object({}), "goal.conflict": z.object({}) } },
     }, events: {} }, { get: async ({ sessionID }) => {
       await ctx.session.get({ sessionID })
       return { goal: await controller.get(sessionID) }
+    }, edit: async ({ sessionID, ...input }, context) => {
+      await ctx.session.get({ sessionID })
+      try { return { goal: await controller.edit(sessionID, input) } }
+      catch (error) {
+        if (error instanceof GoalEditError) return context.error(error.code, error.message, {})
+        throw error
+      }
     } }))
   } catch (error) {
     for (const registration of registrations.reverse()) await registration.dispose().catch(() => {})
