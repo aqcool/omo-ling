@@ -71,7 +71,7 @@ def set_phase(value):
 with tempfile.TemporaryDirectory(prefix='omo-goal-memory-') as tmp:
     root=pathlib.Path(tmp)
     for name in ['home','config/opencode','data','cache','state','workspace']:(root/name).mkdir(parents=True,exist_ok=True)
-    config={'plugins':[{'package':str(pathlib.Path(args.package).resolve()),'options':{'goal':{'default_max_iterations':2}}}], 'model':'fixture/gpt-fake','update':'disable','instructions':[], 'permissions':[{'action':'*','resource':'*','effect':'allow'}],
+    config={'plugins':[{'package':str(pathlib.Path(args.package).resolve()),'options':{'goal':{'default_max_iterations':2},'memory':{'graph':False}}}], 'model':'fixture/gpt-fake','update':'disable','instructions':[], 'permissions':[{'action':'*','resource':'*','effect':'allow'}],
       'providers':{'fixture':{'canonical':'openai','settings':{'baseURL':f'http://127.0.0.1:{model.server_port}/v1','apiKey':'isolated-fake-key','transport':'http','encoding':'none'},'models':{'gpt-fake':{'capabilities':{'tools':True},'limit':{'context':200000,'output':8192}}}}}}
     (root/'config/opencode/opencode.json').write_text(json.dumps(config))
     password=secrets.token_hex(24)
