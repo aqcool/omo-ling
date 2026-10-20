@@ -27,6 +27,7 @@ await appendFile(resolve(output, "THIRD-PARTY-NOTICES.md"),
   "\n\n## Bundled Effect 4.0.1\n\n" + await readFile(resolve(root, "node_modules/effect/LICENSE"), "utf8") +
   "\n\n## Bundled @opencode/schema 2.0.32\n\n" + await readFile(resolve(root, "OPENCODE-LICENSE.txt"), "utf8"))
 await appendFile(resolve(output, "THIRD-PARTY-NOTICES.md"), "\n\n## Bundled YAML 2.9.1\n\n" + await readFile(resolve(root, "node_modules/yaml/LICENSE"), "utf8"))
+await appendFile(resolve(output, "THIRD-PARTY-NOTICES.md"), "\n\n## Adapted graph-memory contract and navigation\n\n" + await readFile(resolve(root, "GRAPH-MEMORY-LICENSE.txt"), "utf8"))
 await copyFile(resolve(root, "README.md"), resolve(output, "README.md"))
 const manifest = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"))
 delete manifest.scripts

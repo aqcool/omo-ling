@@ -4,7 +4,7 @@ LING Studio's OpenCode plugin, based on [fazulfi/omo-v2](https://github.com/fazu
 
 See [the npm package and build guide](ling/README.md). The published server entry is named `omo-ling` and targets OpenCode **2.0.32**. Background work uses the hosting plugin context and native parent session IDs. MCP configuration and skill discovery remain with the host.
 
-This entry now includes native goal mode (`/goal`, bounded continuation and persistent session state) and project memory (`/memory`, validated Git-backed writes and committed-context injection). Automatic memory reflection/sync and the original full prompt/hook set are not included. Upstream licensing and attribution are preserved below.
+This entry includes native goal mode (`/goal`, bounded continuation and persistent session state), shared project memory (`/memory`, validated Git-backed writes), and automatic graph memory scoped to each native session. Completed user turns produce source-linked summaries and triples through the host model; later context retrieves matching history from local SQLite. Graph extraction is enabled by default, incurs a native model request for each eligible new turn, and can be disabled with `memory.graph.enabled: false`. Native forks inherit only a verified message prefix with remapped child source IDs. See [scope, controls, cost, and limitations](ling/README.md#automatic-session-graph-memory). Remote synchronization and the original full prompt/hook set are not included. Upstream licensing and attribution are preserved below.
 
 ---
 

@@ -19,7 +19,7 @@ Keep a source commit and file digests alongside the copy. Install directories mu
 After the npm version is published, replace the local directory entry with:
 
 ```sh
-opencode plugin add omo-ling@0.2.0
+opencode plugin add omo-ling@0.3.0
 ```
 
 LING users should add the same fixed version through the application's plugin manager, using its bundled OpenCode. Reconnect and check that the plugin is **active**. An installed configuration entry alone is not proof of successful loading. Remove the old `oh-my-openagent` entry from the same configuration when switching, preserving other settings.
@@ -43,9 +43,29 @@ Both features register native commands and tools by default. They do not create 
 - Goals persist in the hosting plugin's storage by session ID. Restarted active goals become paused; reconnecting does not automatically request model work. Completion requires an evidence check against the actual objective.
 - `/memory` or `/memory status` reports repository health. `/memory list`, `/memory read system/project.md`, `/memory search <words>` inspect committed content without a model request.
 - Tools `memory` and `memory_read` write and retrieve durable facts and preferences. Writes reuse upstream memory-core validation, writer locks and Git commits. Supported mutations: create, replace, insert, delete, rename, description update and transactional patch. Read-only blocks and dirty repositories are protected.
-- Memory is shared by conversations and agent roles in the same **profile + canonical project**. Different profiles/projects are isolated. For folders outside Git, the actual folder supplies project identity. A moved project/config path currently gets a new identity; there is no implicit migration.
+- Manually written Git memory is shared by conversations and agent roles in the same **profile + canonical project**. Different profiles/projects are isolated. For folders outside Git, the actual folder supplies project identity. A moved project/config path currently gets a new identity; there is no implicit migration.
 - Default location: `${XDG_DATA_HOME:-~/.local/share}/omo-ling/memory/agents/<identity>/repo`. `OMO_LING_MEMORY_HOME` can override the root with an absolute path. `system/*.md` is concise injected context; other blocks can be retrieved. Both context and compaction hooks use committed HEAD only and bounded output. No secrets should be saved.
-- This is plugin memory, separate from LING's application memory. Automatic reflection, automatic fact extraction, background recall workers and remote synchronization are not included.
+- Automatic session graph memory complements these explicit project notes. Both run in the native plugin on the execution host; LING delivers the plugin and shows native results. Remote synchronization is not included.
+
+### Automatic session graph memory
+
+Graph extraction is **enabled by default**. After a newly observed real user turn completes successfully, the plugin makes one additional stateless native model request to summarize the visible user/assistant text and produce navigation triples. The request uses the completed assistant's actual model, with OpenCode's base provider configuration. It follows that provider's actual billing; no separate model account is configured. A project-only provider unavailable in base configuration produces a visible extraction failure rather than a silent model substitution. Normal conversation completion is independent of extraction success.
+
+The SQLite database is local to the execution host at `${OMO_LING_MEMORY_HOME:-${XDG_DATA_HOME:-~/.local/share}/omo-ling/memory}/graphs/<identity>.sqlite`. Every record is scoped by profile, canonical project, and native session ID. The database retains the bounded visible source Q/A, native message IDs, summary, outcome, and triples. Extraction sends that visible source text to the selected model provider through the host; no external graph database, embedding endpoint, or vector service is used.
+
+Recall uses bounded lexical matching, including CJK terms, and one-hop navigation through stored triples. Normal context and compaction requests receive relevant results as ordinary historical data with source roles and IDs. Summaries remain model-derived and may be wrong. Tools, reasoning, recalled context, and compaction summaries are not treated as new user source facts. Synthetic-only continuations, failed/interrupted runs, and ambiguous or incomplete source turns do not trigger extraction. There is no automatic historical backfill or promotion into shared project memory.
+
+Native forks have their own session scope. OpenCode rewrites copied message IDs; inheritance verifies the native fork edge and exact boundary, compares the ordered raw parent/child prefix, and remaps retained facts to the child's actual source IDs. Editing a sent message creates a native fork before that message, so its old text and later history are excluded. If compaction has hidden the boundary or raw sources needed to prove a prefix, inheritance fails closed. Existing memory in the original session remains available across compaction.
+
+Use the existing memory entry:
+
+- `/memory graph status` shows initialized, ready, pending, failed, queued, generating, and provider-waiting state, plus a bounded failure reason.
+- `/memory graph search <words>` returns matching summaries and their actual source Q/A.
+- `/memory graph retry` explicitly retries failed work whose raw native sources are still valid. There is no automatic retry.
+- `/memory graph clear` removes this session's graph records and invalidates queued/in-flight writes. It does not alter native chat history or shared Git memory.
+- `memory_read` accepts `graph_status` and `graph_search` (with `query`). The executing tool context supplies the native session; callers cannot choose a different session in the tool input.
+
+The default extraction timeout is 30 seconds, with a 120-second durable work lease. The queue is bounded. A crash can leave work pending until its lease expires, after which status reports failure; restarting does not replay it automatically. OpenCode 2.0.32's in-process Promise adapter does not propagate a generation AbortSignal. Timeout, clear, deletion, and plugin disposal discard late results, but cannot promise to cancel the provider request or its cost. A timed-out native call holds the generation slot until it settles; `waitingForNativeCall` reports that distinction.
 
 Optional native plugin configuration (preserve all other fields):
 
@@ -53,14 +73,26 @@ Optional native plugin configuration (preserve all other fields):
 {
   "plugins": [{
     "package": "/absolute/path/to/omo-ling/commit",
-    "options": {"goal": {"default_max_iterations": 100}, "memory": {"enabled": true}}
+    "options": {
+      "goal": {"default_max_iterations": 100},
+      "memory": {
+        "enabled": true,
+        "graph": {"enabled": true, "timeout_ms": 30000, "max_pending": 32}
+      }
+    }
   }]
 }
 ```
 
-Set `goal.enabled` or `memory.enabled` to `false` to disable the corresponding registration. Data is retained. Command reports use native synthetic messages with `resume: false`; hosts must display these messages/inbox entries to show a result without inference.
+Set `memory.graph.enabled` to `false` (or `memory.graph` to `false`) to disable automatic graph extraction and recall while keeping explicit project memory. Set `goal.enabled` or `memory.enabled` to `false` to disable the corresponding entire registration. Data is retained. Graph `timeout_ms` is capped at 120000 and `max_pending` at 32. Command reports use native synthetic messages with `resume: false`; hosts must display these messages/inbox entries to show a result without inference.
 
-Goal behavior is adapted from upstream `d1317056` (`hooks/goal`); persistence and lifecycle use the native API. Memory reuses this fork's `packages/memory-core` public domain APIs.
+Goal behavior is adapted from upstream `d1317056` (`hooks/goal`); persistence and lifecycle use the native API. Explicit project memory reuses this fork's `packages/memory-core` public domain APIs. The graph summary/outcome/triples contract and source-linked navigation are adapted from [adoresever/graph-memory](https://github.com/adoresever/graph-memory/tree/5841b1987c3967998818764c9d4238add5f3aa7c), fixed commit `5841b1987c3967998818764c9d4238add5f3aa7c`, under its MIT license. This is a scoped adaptation, not the full upstream SDK or its host adapters. The upstream copyright and license are included in the built `THIRD-PARTY-NOTICES.md`.
+
+### Session graph RPC
+
+`POST /api/rpc/omo.memory.graph/<method>` requires `{"input":{"sessionID":"..."}}`. `status`, `clear`, and `retry` return native RPC outputs containing `{"status":{...}}`; `search` additionally requires `query` and returns `{"results":[...]}`. Each call validates the native session's execution location and project. Missing or mismatched session identity returns an error. The sessionless project-memory RPC cannot read graph data.
+
+Status distinguishes enabled/available, persistent ready/pending/failed counts, queue activity, and `waitingForNativeCall`. Search results contain `sessionID`, `key`, `digest`, `createdAt`, `summary`, `outcome`, `triples`, `sources` (`id`, `role`, `text`), lexical/graph match type, and truncation flags. Output is bounded; truncated source text is marked. Reading status or searching does not request model work.
 
 ### Goal editor RPC
 
@@ -94,8 +126,9 @@ bun run build
 npm pack ./dist --ignore-scripts
 python3 qa.py --cli /absolute/path/to/opencode
 python3 qa-goal-memory.py --cli /absolute/path/to/opencode
+python3 qa-graph-memory.py --cli /absolute/path/to/opencode
 ```
 
-The build produces a standalone `dist/` directory without TypeScript sources or node_modules and bundles runtime dependencies into `index.js`; end users need no install scripts, compiler, or runtime dependency download beyond the package. Build dependencies are pinned in `package-lock.json`. The goal/memory QA additionally drives native commands, Code Mode tools, execution SSE events, continuation limits, cancellation, and restart persistence using a local deterministic HTTP model; no real model credentials or paid requests are used. The no-inference QA starts a private OpenCode server with isolated HOME/XDG roots and tests actual loading, agents, todo roundtrip, missing-session errors, and filesystem tools.
+The build produces a standalone `dist/` directory without TypeScript sources or node_modules and bundles runtime dependencies into `index.js`; end users need no install scripts, compiler, or runtime dependency download beyond the package. Build dependencies are pinned in `package-lock.json`. Goal/project-memory QA explicitly disables graph extraction to isolate its commands, Code Mode tools, execution events, continuation limits, interruption, and restart behavior. Graph QA exercises the real native HTTP/SSE surface with a deterministic local model, source IDs, native before/through forks, failure/retry, late-result fences, recall, compaction, restart, and opt-out. Both use isolated HOME/XDG roots, compare the real session database count before/after, and make no paid model requests. The no-inference QA tests actual loading, agents, todo roundtrip, missing-session errors, and filesystem tools.
 
 Source: `fazulfi/omo-v2` commit `8907576a64e6c1357581033f0195e742946059bc`, itself based on `code-yeongyu/oh-my-openagent` 5.1.4. Sustainable Use License 1.0 and original third-party notices are included. The name change does not change those license terms.
