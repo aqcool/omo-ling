@@ -1,3 +1,7 @@
 import "../packages/omo-opencode/src/v2/orchestration.test"
 import "./goal.test"
 import "./memory.test"
+import "./graph-extract.test"
+import "./graph-store.test"
+import "./graph-controller.test"
+import "./graph-memory.test"

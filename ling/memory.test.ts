@@ -120,7 +120,7 @@ function mockHost(project: string) {
   let disposed = 0
   const registration = () => ({ dispose: async () => { disposed++ } })
   const ctx = {
-    options: {}, location: { directory: project, project: { canonical: project } },
+    options: { memory: { graph: false } }, location: { directory: project, project: { canonical: project } },
     tool: { transform: async (callback: any) => { callback({ add: (tool: any) => tools.set(tool.name, tool) }); return registration() } },
     command: { transform: async (callback: any) => { callback({ add: (command: any) => commands.set(command.name, command) }); return registration() } },
     session: { hook: async (name: string, callback: any) => { hooks.set(name, callback); return registration() }, synthetic: async (input: any) => { messages.push(input) } },
