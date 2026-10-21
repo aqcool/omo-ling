@@ -169,14 +169,35 @@ describe("native graph memory bindings", () => {
     f.seed()
     const rpc = f.rpc.get("omo.memory.graph")!
     for (const sessionID of ["foreign-project", "foreign-host"]) {
-      for (const method of ["status", "search", "clear", "retry"]) {
-        await expect(rpc[method]({ sessionID, query: "violet" })).rejects.toThrow("outside")
+      for (const method of ["status", "search", "snapshot", "detail", "clear", "retry"]) {
+        await expect(rpc[method]({ sessionID, query: "violet", key: "a".repeat(64) })).rejects.toThrow("outside")
       }
     }
     await expect(rpc.status({})).rejects.toThrow("native session ID")
     expect(f.store.status("one").ready).toBe(1)
     expect(f.store.status("foreign-project").initialized).toBe(false)
     expect(f.generated).toHaveLength(0)
+  })
+
+  test("browser RPC returns exact source groups without requesting model work", async () => {
+    // given
+    const f = await fixture()
+    cleanups.push(await registerMemory(f.ctx))
+    f.seed("one", "violet " + "原始来源".repeat(2_000))
+    const rpc = f.rpc.get("omo.memory.graph")!
+    // when
+    const snapshot = await rpc.snapshot({ sessionID: "one" }) as { revision: string; records: Array<{ key: string }> }
+    const detail = await rpc.detail({ sessionID: "one", key: snapshot.records[0].key, revision: snapshot.revision })
+    // then
+    expect(snapshot).toMatchObject({ sessionID: "one", records: [{ sources: [
+      { id: "original-user", role: "user" }, { id: "original-assistant", role: "assistant" },
+    ] }], hasMore: false, truncated: false, resetRequired: false, status: { enabled: true, available: true, ready: 1 } })
+    expect(detail).toMatchObject({ record: { sources: [
+      { id: "original-user", role: "user", text: "violet " + "原始来源".repeat(2_000) },
+      { id: "original-assistant", role: "assistant", text: "Violet enabled" },
+    ] }, resetRequired: false })
+    expect(f.generated).toHaveLength(0)
+    expect(f.sent).toHaveLength(0)
   })
 
   test("unavailable native history fails open for both hooks and exposes a redacted status error", async () => {
@@ -215,6 +236,7 @@ describe("native graph memory bindings", () => {
       expect(status.lastError).toBeTruthy()
       expect(status.lastError).not.toContain("private native stream")
       expect(await graph.controller.search("one", "violet")).toHaveLength(1)
+      expect(await graph.controller.snapshot("one")).toMatchObject({ status: { available: false }, records: [{ summary: "violet is enabled" }] })
     }
   })
 })

@@ -535,9 +535,41 @@ def graph_checks(host, fixture, prefix, checks):
         "status": host.status(session), "alphaSourceIDs": sorted(source_ids(alpha)),
         "betaSourceIDs": sorted(source_ids(beta)),
     }
+    requests_before = len(fixture.requests)
+    first_page = host.rpc("snapshot", session, limit=1)
+    second_page = host.rpc("snapshot", session, cursor=first_page["nextCursor"], limit=1)
+    assert first_page["hasMore"] and first_page["truncated"] and not first_page["resetRequired"]
+    assert not second_page["hasMore"] and not second_page["truncated"] and "nextCursor" not in second_page
+    assert first_page["revision"] == second_page["revision"]
+    browsed = first_page["records"] + second_page["records"]
+    assert len(browsed) == 2 and len({row["key"] for row in browsed}) == 2
+    assert source_ids(browsed) == source_ids(alpha + beta), "browser omitted native source IDs"
+    assert all("text" not in item for row in browsed for item in row["sources"]), "snapshot included source body"
+    details = [host.rpc("detail", session, key=row["key"], revision=first_page["revision"])["record"]
+               for row in browsed]
+    assert_sources(host, session, details, first_user)
+    assert all(row["triples"] == details[index]["triples"] for index, row in enumerate(browsed))
+    assert len({row["triples"][0]["objectID"] for row in browsed}) == 1, "shared entity IDs differ"
+    assert len({row["triples"][0]["id"] for row in browsed}) == 2, "source-group edge IDs collide"
+    assert host.rpc("snapshot", session)["records"] == browsed, "repeat browse changed record identities"
+    assert host.rpc("snapshot", session, query="no such fact")["records"] == []
+    assert len(fixture.requests) == requests_before, "read-only browser RPC requested model work"
+    checks["browser_pages_native_source_details_without_model_work"] = {
+        "revision": first_page["revision"], "recordKeys": [row["key"] for row in browsed],
+        "sourceIDs": sorted(source_ids(browsed)), "modelRequestsAdded": len(fixture.requests) - requests_before,
+    }
     other = host.new()
     assert not host.search(other, ALPHA), "independent session leaked graph facts"
     checks["independent_session_isolated"] = True
+    assert not host.rpc("snapshot", other)["records"]
+    bad_scope = host.api("/api/rpc/omo.memory.graph/snapshot", {
+        "input": {"sessionID": other, "cursor": first_page["nextCursor"]}}, allow_error=True)
+    bad_query = host.api("/api/rpc/omo.memory.graph/snapshot", {
+        "input": {"sessionID": session, "cursor": first_page["nextCursor"], "query": "other"}}, allow_error=True)
+    bad_limit = host.api("/api/rpc/omo.memory.graph/snapshot", {
+        "input": {"sessionID": session, "limit": 21}}, allow_error=True)
+    assert all(row.get("status", 0) >= 400 for row in [bad_scope, bad_query, bad_limit])
+    checks["browser_rejects_foreign_cursor_query_and_limit"] = [bad_scope, bad_query, bad_limit]
 
     queued = host.new()
     queued_first = host.api("/api/session/" + queued + "/prompt", {
@@ -559,9 +591,10 @@ def graph_checks(host, fixture, prefix, checks):
     }
 
     before, through = prefix["beforeSessionID"], prefix["throughSessionID"]
-    # Fork inheritance is intentionally lazy; a scoped search initializes it.
-    host.search(before, ALPHA)
-    host.search(through, BETA)
+    # Browsing initializes the same verified native prefix without extraction.
+    assert len(host.rpc("snapshot", before)["records"]) == 1
+    through_page = host.rpc("snapshot", through, limit=1)
+    assert through_page["hasMore"]
     host.settled(before, 1)
     host.settled(through, 2)
     assert_sources(host, before, host.search(before, ALPHA), prefix["beforeFirstUserID"])
@@ -573,6 +606,15 @@ def graph_checks(host, fixture, prefix, checks):
     assert_sources(host, before, host.search(before, "QA_GRAPH_REPLACEMENT"), replacement_user)
     assert not host.search(before, BETA), "replacement execution restored the excluded future"
     checks["fork_prefix_and_edit_exclusion"] = True
+    requests_before = len(fixture.requests)
+    host.rpc("clear", through)
+    reset = host.rpc("snapshot", through, cursor=through_page["nextCursor"])
+    detail_reset = host.rpc("detail", through, key=through_page["records"][0]["key"], revision=through_page["revision"])
+    assert reset["resetRequired"] and reset["records"] == [] and not reset["hasMore"] and "nextCursor" not in reset
+    assert detail_reset["resetRequired"] and detail_reset["record"] is None
+    assert not host.rpc("snapshot", through)["records"]
+    assert len(fixture.requests) == requests_before
+    checks["browser_clear_resets_stale_page_and_source_detail"] = True
 
     count = len(fixture.extract_requests())
     host.api("/api/session/" + session + "/synthetic", {
