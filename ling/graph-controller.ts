@@ -5,6 +5,7 @@ import { resolve } from "node:path"
 import { isDeepStrictEqual } from "node:util"
 import { buildGraphExtractionPrompt, parseGraphExtraction } from "./graph-extract"
 import { GraphStore } from "./graph-store"
+import type { GraphSnapshotInput } from "./graph-browse"
 import { GRAPH_LIMITS, graphFailureReason, validateSessionID, type GraphStatus, type GraphTicket, type GraphTurn, type Source } from "./graph-types"
 
 type Host = Pick<Plugin.Context, "session" | "generate" | "location">
@@ -265,17 +266,33 @@ export class GraphController {
       available = false; this.noteError(sessionID, "Graph storage unavailable")
       status = { initialized: false, deleted: false, epoch: 0, generation: 0, ready: 0, pending: 0, failed: 0 }
     }
+    return this.runtimeStatus(sessionID, status, available)
+  }
+  private runtimeStatus(sessionID: string, status: GraphStatus, available = true): GraphRuntimeStatus {
     return { ...status, ...(this.errors.has(sessionID) ? { lastError: this.errors.get(sessionID) } : {}),
       ...(this.subscriptionError ? { lastError: this.subscriptionError } : {}),
       enabled: true, available: available && !this.subscriptionError, queued: queue.filter(job => job.owner === this && job.ticket.sessionID === sessionID).length,
       generating: active?.owner === this && active.ticket.sessionID === sessionID && active.valid,
       waitingForNativeCall: active?.owner === this && active.ticket.sessionID === sessionID && !active.valid }
   }
-  async search(sessionID: string, query: string, maxChars = GRAPH_LIMITS.outputBytes) {
+  private async prepareRead(sessionID: string) {
     const info = await this.assertSessionScope(sessionID)
     if (!this.store.status(sessionID).initialized && info.fork) {
       await this.initializeFork(sessionID, info, await this.host.session.context({ sessionID }))
     }
+  }
+  async snapshot(sessionID: string, options: GraphSnapshotInput = {}) {
+    await this.prepareRead(sessionID)
+    const result = this.store.snapshot(sessionID, options)
+    return { ...result, status: this.runtimeStatus(sessionID, result.status) }
+  }
+  async detail(sessionID: string, key: string, revision?: string) {
+    await this.prepareRead(sessionID)
+    const result = this.store.detail(sessionID, key, revision)
+    return { ...result, status: this.runtimeStatus(sessionID, result.status) }
+  }
+  async search(sessionID: string, query: string, maxChars = GRAPH_LIMITS.outputBytes) {
+    await this.prepareRead(sessionID)
     return this.store.search(sessionID, query, { limit: GRAPH_LIMITS.results, maxChars })
   }
   async recall(sessionID: string) {

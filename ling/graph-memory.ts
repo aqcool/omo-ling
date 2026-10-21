@@ -3,6 +3,7 @@ import { join } from "node:path"
 import { z } from "zod"
 import { GraphController } from "./graph-controller"
 import { GraphStore } from "./graph-store"
+import { graphBrowseRecordSchema, graphDetailRecordSchema, graphIdentitySchema, graphSnapshotInput } from "./graph-browse"
 import { GRAPH_LIMITS } from "./graph-types"
 import { memoryIdentity, memoryStorageOptions } from "./memory-store"
 
@@ -19,6 +20,11 @@ const searchOutput = z.object({ results: z.array(z.object({
   triples: z.array(z.object({ subject: z.string(), predicate: z.string(), object: z.string() })),
   sources: z.array(sourceOutput), match: z.enum(["lexical", "graph"]), truncated: z.boolean(),
 })) })
+const snapshotOutput = z.object({ sessionID: z.string(), revision: graphIdentitySchema, status: statusOutput.shape.status,
+  records: z.array(graphBrowseRecordSchema), hasMore: z.boolean(), nextCursor: z.string().optional(),
+  truncated: z.boolean(), resetRequired: z.boolean() })
+const detailOutput = z.object({ sessionID: z.string(), revision: graphIdentitySchema, status: statusOutput.shape.status,
+  record: graphDetailRecordSchema.nullable(), resetRequired: z.boolean() })
 const GRAPH_MESSAGE_ID = "omo-ling-session-graph-memory"
 
 /** Graph retrieval is ordinary historical data, never a privileged system update. */
@@ -55,11 +61,15 @@ export async function registerGraphMemory(ctx: Plugin.Context, project: string) 
     registrations.push(await ctx.rpc.register({ id: "omo.memory.graph", methods: {
       status: { input: sessionInput, output: statusOutput },
       search: { input: sessionInput.extend({ query: z.string().min(1).max(GRAPH_LIMITS.queryChars) }), output: searchOutput },
+      snapshot: { input: sessionInput.extend(graphSnapshotInput.shape), output: snapshotOutput },
+      detail: { input: sessionInput.extend({ key: graphIdentitySchema, revision: graphIdentitySchema.optional() }), output: detailOutput },
       clear: { input: sessionInput, output: statusOutput },
       retry: { input: sessionInput, output: statusOutput },
     }, events: {} }, {
       status: async ({ sessionID }) => ({ status: await controller.status(sessionID) }),
       search: async ({ sessionID, query }) => ({ results: await controller.search(sessionID, query) }),
+      snapshot: async ({ sessionID, ...options }) => controller.snapshot(sessionID, options),
+      detail: async ({ sessionID, key, revision }) => controller.detail(sessionID, key, revision),
       clear: async ({ sessionID }) => {
         await controller.assertSessionScope(sessionID)
         controller.clear(sessionID)
