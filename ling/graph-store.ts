@@ -2,6 +2,10 @@ import { Database, type SQLQueryBindings } from "bun:sqlite"
 import { chmodSync, existsSync, lstatSync, mkdirSync } from "node:fs"
 import { dirname, isAbsolute } from "node:path"
 import {
+  GRAPH_BROWSE_LIMITS, graphBrowseRecord, graphCursor, graphHash, graphIdentitySchema, graphNormalized,
+  graphSnapshotInput, readGraphCursor, type GraphDetail, type GraphSnapshot, type GraphSnapshotInput,
+} from "./graph-browse"
+import {
   GRAPH_LIMITS, GraphValidationError, graphFailureReason, sourceDigest, turnIdentity, validateGraphExtraction,
   validateGraphTurn, validateSessionID, visibleSourceDigests,
   type Extraction, type GraphSearchOptions, type GraphSearchResult, type GraphStatus,
@@ -221,15 +225,73 @@ export class GraphStore {
   }
 
   status(sessionID: string): GraphStatus {
+    return this.scoped(sessionID, db => this.readStatus(db, sessionID))
+  }
+
+  private readStatus(db: Database, sessionID: string): GraphStatus {
+    const session = this.session(db, sessionID)
+    const counts = rows<{ state: TurnRow["state"]; count: number }>(db, "SELECT state, count(*) AS count FROM graph_turns WHERE session_id = ? GROUP BY state", sessionID)
+    const last = one<{ error: string }>(db, "SELECT error FROM graph_turns WHERE session_id = ? AND state = 'failed' ORDER BY updated_at DESC, turn_key LIMIT 1", sessionID)
+    return { initialized: Boolean(session?.initialized), deleted: Boolean(session?.deleted), epoch: session?.epoch ?? 0, generation: session?.generation ?? 0,
+      ready: counts.find(row => row.state === "ready")?.count ?? 0,
+      pending: counts.find(row => row.state === "pending")?.count ?? 0,
+      failed: counts.find(row => row.state === "failed")?.count ?? 0,
+      ...(last ? { lastError: graphFailureReason(last.error) } : {}) }
+  }
+
+  private revision(db: Database, sessionID: string): string {
+    // Metadata covers each allowed state transition, including same-millisecond
+    // completion/failure. Extraction can only be written once per fenced attempt.
+    const metadata = rows(db, `SELECT turn_key, digest, epoch, state, updated_at, error
+      FROM graph_turns WHERE session_id = ? ORDER BY turn_key`, sessionID)
+    return graphHash([sessionID, this.session(db, sessionID), metadata])
+  }
+
+  snapshot(sessionID: string, options: GraphSnapshotInput = {}): GraphSnapshot {
+    const parsed = graphSnapshotInput.safeParse(options)
+    if (!parsed.success) throw new GraphValidationError("Graph browser options are invalid")
+    const query = graphNormalized(parsed.data.query ?? "").trim()
+    const scope = graphHash([this.path, sessionID, query])
+    const cursor = readGraphCursor(parsed.data.cursor, scope)
     return this.scoped(sessionID, db => {
-      const session = this.session(db, sessionID)
-      const counts = rows<{ state: TurnRow["state"]; count: number }>(db, "SELECT state, count(*) AS count FROM graph_turns WHERE session_id = ? GROUP BY state", sessionID)
-      const last = one<{ error: string }>(db, "SELECT error FROM graph_turns WHERE session_id = ? AND state = 'failed' ORDER BY updated_at DESC, turn_key LIMIT 1", sessionID)
-      return { initialized: Boolean(session?.initialized), deleted: Boolean(session?.deleted), epoch: session?.epoch ?? 0, generation: session?.generation ?? 0,
-        ready: counts.find(row => row.state === "ready")?.count ?? 0,
-        pending: counts.find(row => row.state === "pending")?.count ?? 0,
-        failed: counts.find(row => row.state === "failed")?.count ?? 0,
-        ...(last ? { lastError: graphFailureReason(last.error) } : {}) }
+      const revision = this.revision(db, sessionID), status = this.readStatus(db, sessionID)
+      const result: GraphSnapshot = { sessionID, revision, status, records: [], hasMore: false,
+        truncated: false, resetRequired: Boolean(cursor && cursor.revision !== revision) }
+      if (result.resetRequired || status.deleted) return result
+      const offset = cursor?.offset ?? 0, limit = parsed.data.limit ?? GRAPH_BROWSE_LIMITS.records
+      const candidates = rows<TurnRow>(db, `SELECT * FROM graph_turns WHERE session_id = ? AND state = 'ready'
+        AND instr(search_text, ?) > 0 ORDER BY created_at DESC, turn_key LIMIT ? OFFSET ?`, sessionID, query, limit + 1, offset)
+      for (const row of candidates.slice(0, limit)) {
+        const detail = graphBrowseRecord(sessionID, row.turn_key, row.digest, row.created_at, this.extraction(row), this.turn(row).sources)
+        const record = { ...detail, sources: detail.sources.map(({ id, role }) => ({ id, role })) }
+        if (Buffer.byteLength(JSON.stringify({ ...result, records: [...result.records, record] }), "utf8")
+          > GRAPH_BROWSE_LIMITS.snapshotBytes - 4096) break
+        result.records.push(record)
+      }
+      if (candidates.length && !result.records.length) throw new GraphStorageError("Graph record exceeds browser output bounds")
+      result.hasMore = result.records.length < candidates.length
+      result.truncated = result.hasMore
+      if (result.hasMore) result.nextCursor = graphCursor(scope, revision, offset + result.records.length)
+      return result
+    })
+  }
+
+  detail(sessionID: string, key: string, expectedRevision?: string): GraphDetail {
+    if (!graphIdentitySchema.safeParse(key).success
+      || (expectedRevision !== undefined && !graphIdentitySchema.safeParse(expectedRevision).success)) {
+      throw new GraphValidationError("Graph browser record identity is invalid")
+    }
+    return this.scoped(sessionID, db => {
+      const revision = this.revision(db, sessionID), status = this.readStatus(db, sessionID)
+      const result: GraphDetail = { sessionID, revision, status, record: null,
+        resetRequired: expectedRevision !== undefined && expectedRevision !== revision }
+      if (result.resetRequired || status.deleted) return result
+      const row = one<TurnRow>(db, "SELECT * FROM graph_turns WHERE session_id = ? AND turn_key = ? AND state = 'ready'", sessionID, key)
+      if (row) result.record = graphBrowseRecord(sessionID, row.turn_key, row.digest, row.created_at, this.extraction(row), this.turn(row).sources)
+      if (Buffer.byteLength(JSON.stringify(result), "utf8") > GRAPH_BROWSE_LIMITS.detailBytes - 4096) {
+        throw new GraphStorageError("Graph source group exceeds browser output bounds")
+      }
+      return result
     })
   }
 
